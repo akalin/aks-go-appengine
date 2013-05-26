@@ -1,3 +1,6 @@
 queue:
+ - name: job-queue
+   rate: 1/s
+   max_concurrent_requests: 4
  - name: potential-witness-queue
    mode: pull

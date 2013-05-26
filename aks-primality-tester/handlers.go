@@ -10,6 +10,8 @@ import "log"
 import "math/big"
 import "net/http"
 import "runtime"
+import "net/url"
+import "os"
 
 type Job struct {
 	// TODO(akalin): Use (serialized) big.Ints instead.
@@ -23,6 +25,7 @@ type Job struct {
 func init() {
 	http.HandleFunc("/uploadJob", uploadJobHandler)
 	http.HandleFunc("/startJob", startJobHandler)
+	http.HandleFunc("/processJob", processJobHandler)
 	http.HandleFunc("/getJobs", getJobsHandler)
 	http.HandleFunc("/getAKSWitness", getAKSWitnessHandler)
 }
@@ -124,10 +127,99 @@ func startJobHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// TODO(akalin): Kick off tasks to process the tasks just
-	// added to potentialWitnessQueue.
+	var jobTasks []*taskqueue.Task
+	numJobTasks := 4
+	for i := 0; i < numJobTasks; i++ {
+		jobTask := taskqueue.NewPOSTTask(
+			"/processJob", url.Values{"key": {key.Encode()}})
+		host := appengine.BackendHostname(c, "job-processor", i)
+		jobTask.Header.Set("Host", host)
+		jobTasks = append(jobTasks, jobTask)
+	}
+	if _, err := taskqueue.AddMulti(c, jobTasks, "job-queue"); err != nil {
+		emitError(c, w, err.Error())
+		return
+	}
 
 	fmt.Fprintf(w, "Processing %s", key.Encode())
+}
+
+func processPotentialWitnessTask(
+	job Job, task *taskqueue.Task, maxOutstanding int,
+	w http.ResponseWriter, logger *log.Logger) error {
+	var potentialWitness int64
+	if err := json.Unmarshal(task.Payload, &potentialWitness); err != nil {
+		return err
+	}
+
+	n := big.NewInt(job.N)
+	R := big.NewInt(job.R)
+	start := big.NewInt(potentialWitness)
+	end := big.NewInt(potentialWitness + 1)
+	a := aks.GetAKSWitness(n, R, start, end, maxOutstanding, logger)
+
+	// TODO(akalin): Store results instead.
+	if a != nil {
+		fmt.Fprintf(w, "%v has AKS witness %v\n", n, a)
+	} else {
+		fmt.Fprintf(
+			w,
+			"%v has no AKS witness in [%v, %v)\n", n, start, end)
+	}
+	return nil
+}
+
+func processJobHandler(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+
+	// TODO(akalin): Error out if the request isn't a POST.
+
+	keyStr := r.FormValue("key")
+	key, err := datastore.DecodeKey(keyStr)
+	if err != nil {
+		emitError(c, w, err.Error())
+		return
+	}
+	var job Job
+	if err = datastore.Get(c, key, &job); err != nil {
+		emitError(c, w, err.Error())
+		return
+	}
+
+	numCPU := runtime.NumCPU()
+	// TODO(akalin): Figure out a better way to limit this.
+	secPerPotentialWitness := 1000
+	for {
+		tasks, err := taskqueue.LeaseByTag(
+			c, numCPU, "potential-witness-queue",
+			numCPU*secPerPotentialWitness, key.Encode())
+		if err != nil {
+			emitError(c, w, err.Error())
+			return
+		}
+		if len(tasks) == 0 {
+			break
+		}
+
+		logger := log.New(os.Stderr, "", 0)
+		for _, task := range tasks {
+			err := processPotentialWitnessTask(
+				job, task, numCPU, w, logger)
+			if err != nil {
+				emitError(c, w, err.Error())
+				return
+			}
+		}
+
+		err = taskqueue.DeleteMulti(
+			c, tasks, "potential-witness-queue")
+		if err != nil {
+			emitError(c, w, err.Error())
+			return
+		}
+	}
+
+	fmt.Fprintf(w, "Processed %s", key.Encode())
 }
 
 func getJobsHandler(w http.ResponseWriter, r *http.Request) {
