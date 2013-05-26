@@ -146,10 +146,10 @@ func startJobHandler(w http.ResponseWriter, r *http.Request) {
 
 func processPotentialWitnessTask(
 	job Job, task *taskqueue.Task, maxOutstanding int,
-	w http.ResponseWriter, logger *log.Logger) error {
+	w http.ResponseWriter, logger *log.Logger) (int64, bool, error) {
 	var potentialWitness int64
 	if err := json.Unmarshal(task.Payload, &potentialWitness); err != nil {
-		return err
+		return potentialWitness, false, err
 	}
 
 	n := big.NewInt(job.N)
@@ -158,15 +158,56 @@ func processPotentialWitnessTask(
 	end := big.NewInt(potentialWitness + 1)
 	a := aks.GetAKSWitness(n, R, start, end, maxOutstanding, logger)
 
-	// TODO(akalin): Store results instead.
-	if a != nil {
-		fmt.Fprintf(w, "%v has AKS witness %v\n", n, a)
-	} else {
-		fmt.Fprintf(
-			w,
-			"%v has no AKS witness in [%v, %v)\n", n, start, end)
+	return potentialWitness, a != nil, nil
+}
+
+func processPotentialWitnessTasks(
+	c appengine.Context,
+	job Job, tasks []*taskqueue.Task, maxOutstanding int,
+	w http.ResponseWriter, logger *log.Logger) ([]int64, []int64, error) {
+
+	var newWitnesses []int64
+	var newNonWitnesses []int64
+	for _, task := range tasks {
+		potentialWitness, isWitness, err :=
+			processPotentialWitnessTask(
+				job, task, maxOutstanding, w, logger)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if isWitness {
+			newWitnesses =
+				append(newWitnesses, potentialWitness)
+			c.Infof("%d is an AKS witness for %d",
+				potentialWitness, job.N)
+			break
+		} else {
+			newNonWitnesses =
+				append(newNonWitnesses, potentialWitness)
+			c.Infof("%d is not an AKS witness for %d",
+				potentialWitness, job.N)
+		}
 	}
-	return nil
+	return newWitnesses, newNonWitnesses, nil
+}
+
+func appendResultsToJob(c appengine.Context, key *datastore.Key,
+	newWitnesses []int64, newNonWitnesses []int64) (Job, error) {
+	var job Job
+	if err := datastore.Get(c, key, &job); err != nil {
+		return Job{}, err
+	}
+	for _, w := range newWitnesses {
+		job.Witnesses = append(job.Witnesses, w)
+	}
+	for _, w := range newNonWitnesses {
+		job.NonWitnesses = append(job.NonWitnesses, w)
+	}
+	if _, err := datastore.Put(c, key, &job); err != nil {
+		return Job{}, err
+	}
+	return job, nil
 }
 
 func processJobHandler(w http.ResponseWriter, r *http.Request) {
@@ -186,6 +227,7 @@ func processJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logger := log.New(os.Stderr, "", 0)
 	numCPU := runtime.NumCPU()
 	// TODO(akalin): Figure out a better way to limit this.
 	secPerPotentialWitness := 1000
@@ -201,11 +243,24 @@ func processJobHandler(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		logger := log.New(os.Stderr, "", 0)
-		for _, task := range tasks {
-			err := processPotentialWitnessTask(
-				job, task, numCPU, w, logger)
+		if len(job.Witnesses) == 0 {
+			newWitnesses, newNonWitnesses, err :=
+				processPotentialWitnessTasks(
+					c, job, tasks, numCPU, w, logger)
+
 			if err != nil {
+				emitError(c, w, err.Error())
+				return
+			}
+
+			appendToJob := func(c appengine.Context) error {
+				job, err = appendResultsToJob(
+					c, key, newWitnesses, newNonWitnesses)
+				return err
+			}
+
+			if err := datastore.RunInTransaction(
+				c, appendToJob, nil); err != nil {
 				emitError(c, w, err.Error())
 				return
 			}
