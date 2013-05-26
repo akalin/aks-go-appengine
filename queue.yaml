@@ -1,0 +1,3 @@
+queue:
+ - name: potential-witness-queue
+   mode: pull
