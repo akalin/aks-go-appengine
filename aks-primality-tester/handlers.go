@@ -15,12 +15,11 @@ import "net/url"
 import "os"
 
 type Job struct {
-	// TODO(akalin): Use (serialized) big.Ints instead.
-	N            int64
-	R            int64
-	M            int64
-	NonWitnesses []int64
-	Witnesses    []int64
+	N            string
+	R            string
+	M            string
+	NonWitnesses []string
+	Witnesses    []string
 }
 
 func init() {
@@ -79,9 +78,9 @@ func uploadJobHandler(w http.ResponseWriter, r *http.Request) {
 	// N.
 
 	job := Job{
-		N: n.Int64(),
-		R: R.Int64(),
-		M: M.Int64(),
+		N: n.String(),
+		R: R.String(),
+		M: M.String(),
 	}
 	incompleteKey := datastore.NewIncompleteKey(c, "Job", nil)
 	key, err := datastore.Put(c, incompleteKey, &job)
@@ -111,8 +110,10 @@ func startJobHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var tasks []*taskqueue.Task
-	for i := int64(1); i < job.M; i++ {
-		b, err := json.Marshal(i)
+	var M big.Int
+	M.SetString(job.M, 10)
+	for i := big.NewInt(1); i.Cmp(&M) < 0; i.Add(i, big.NewInt(1)) {
+		b, err := json.Marshal(i.String())
 		if err != nil {
 			emitError(c, w, err.Error())
 			return
@@ -157,33 +158,37 @@ func startJobHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func processPotentialWitnessTask(
-	job Job, task *taskqueue.Task, maxOutstanding int,
-	w http.ResponseWriter, logger *log.Logger) (int64, bool, error) {
-	var potentialWitness int64
-	if err := json.Unmarshal(task.Payload, &potentialWitness); err != nil {
-		return potentialWitness, false, err
+	n *big.Int, r *big.Int, task *taskqueue.Task, maxOutstanding int,
+	w http.ResponseWriter, logger *log.Logger) (string, bool, error) {
+	var potentialWitnessStr string
+	if err := json.Unmarshal(
+		task.Payload, &potentialWitnessStr); err != nil {
+		return "", false, err
 	}
 
-	n := big.NewInt(job.N)
-	R := big.NewInt(job.R)
-	start := big.NewInt(potentialWitness)
-	end := big.NewInt(potentialWitness + 1)
-	a := aks.GetAKSWitness(n, R, start, end, maxOutstanding, logger)
+	var potentialWitness big.Int
+	potentialWitness.SetString(potentialWitnessStr, 10)
 
-	return potentialWitness, a != nil, nil
+	start := potentialWitness
+	var end big.Int
+	end.Add(&start, big.NewInt(1))
+	a := aks.GetAKSWitness(n, r, &start, &end, maxOutstanding, logger)
+
+	return potentialWitnessStr, a != nil, nil
 }
 
 func processPotentialWitnessTasks(
 	c appengine.Context,
-	job Job, tasks []*taskqueue.Task, maxOutstanding int,
-	w http.ResponseWriter, logger *log.Logger) ([]int64, []int64, error) {
+	n *big.Int, r *big.Int, tasks []*taskqueue.Task, maxOutstanding int,
+	w http.ResponseWriter,
+	logger *log.Logger) ([]string, []string, error) {
 
-	var newWitnesses []int64
-	var newNonWitnesses []int64
+	var newWitnesses []string
+	var newNonWitnesses []string
 	for _, task := range tasks {
 		potentialWitness, isWitness, err :=
 			processPotentialWitnessTask(
-				job, task, maxOutstanding, w, logger)
+				n, r, task, maxOutstanding, w, logger)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -191,21 +196,21 @@ func processPotentialWitnessTasks(
 		if isWitness {
 			newWitnesses =
 				append(newWitnesses, potentialWitness)
-			c.Infof("%d is an AKS witness for %d",
-				potentialWitness, job.N)
+			c.Infof("%s is an AKS witness for %v",
+				potentialWitness, n)
 			break
 		} else {
 			newNonWitnesses =
 				append(newNonWitnesses, potentialWitness)
-			c.Infof("%d is not an AKS witness for %d",
-				potentialWitness, job.N)
+			c.Infof("%s is not an AKS witness for %v",
+				potentialWitness, n)
 		}
 	}
 	return newWitnesses, newNonWitnesses, nil
 }
 
 func appendResultsToJob(c appengine.Context, key *datastore.Key,
-	newWitnesses []int64, newNonWitnesses []int64) (Job, error) {
+	newWitnesses []string, newNonWitnesses []string) (Job, error) {
 	var job Job
 	if err := datastore.Get(c, key, &job); err != nil {
 		return Job{}, err
@@ -238,6 +243,10 @@ func processJobHandler(w http.ResponseWriter, r *http.Request) {
 		emitError(c, w, err.Error())
 		return
 	}
+	var n big.Int
+	n.SetString(job.N, 10)
+	var R big.Int
+	R.SetString(job.R, 10)
 
 	logger := log.New(os.Stderr, "", 0)
 	numCPU := runtime.NumCPU()
@@ -258,7 +267,7 @@ func processJobHandler(w http.ResponseWriter, r *http.Request) {
 		if len(job.Witnesses) == 0 {
 			newWitnesses, newNonWitnesses, err :=
 				processPotentialWitnessTasks(
-					c, job, tasks, numCPU, w, logger)
+					c, &n, &R, tasks, numCPU, w, logger)
 
 			if err != nil {
 				emitError(c, w, err.Error())
