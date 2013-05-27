@@ -6,6 +6,7 @@ import "appengine/taskqueue"
 import "encoding/json"
 import "fmt"
 import "github.com/akalin/aks-go/aks"
+import "html/template"
 import "log"
 import "math/big"
 import "net/http"
@@ -23,6 +24,7 @@ type Job struct {
 }
 
 func init() {
+	http.HandleFunc("/", rootHandler)
 	http.HandleFunc("/uploadJob", uploadJobHandler)
 	http.HandleFunc("/startJob", startJobHandler)
 	http.HandleFunc("/processJob", processJobHandler)
@@ -33,6 +35,16 @@ func init() {
 func emitError(c appengine.Context, w http.ResponseWriter, error string) {
 	c.Errorf("%s", error)
 	http.Error(w, error, http.StatusInternalServerError)
+}
+
+var rootTemplate = template.Must(template.ParseFiles("templates/root.html"))
+
+func rootHandler(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	if err := rootTemplate.Execute(w, nil); err != nil {
+		emitError(c, w, err.Error())
+		return
+	}
 }
 
 func parseFormBigInt(

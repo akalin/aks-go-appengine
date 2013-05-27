@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>AKS Primality Tester</title>
+  </head>
+  <body>
+    <pre id="jobs"></pre>
+    <input id="refresh" type="button" value="Refresh" />
+    <script>
+      'use strict';
+
+      function onJobsLoad() {
+        var jobsPre = document.getElementById('jobs');
+        var jobs = JSON.parse(this.responseText);
+        jobsPre.textContent = JSON.stringify(jobs, null, " ");
+      }
+
+      function updateJobs() {
+        var req = new XMLHttpRequest();
+        req.onload = onJobsLoad;
+        req.open("get", "/getJobs", true);
+        req.send();
+      }
+
+      var refreshButton = document.getElementById('refresh');
+      refreshButton.onclick = updateJobs;
+
+      updateJobs();
+    </script>
+  </body>
+</html>
