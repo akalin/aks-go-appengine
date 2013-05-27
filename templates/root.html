@@ -12,8 +12,23 @@
     <script>
       'use strict';
 
-      function onJobUploaded() {
+      function onJobStarted() {
         window.setTimeout(updateJobs, 1000);
+      }
+
+      function startJob(key) {
+        var req = new XMLHttpRequest();
+        req.onload = onJobStarted;
+        req.open("post", "/startJob", true);
+
+        var form = new FormData();
+        form.append("key", key);
+        req.send(form);
+      }
+
+      function onJobUploaded() {
+        var key = this.responseText;
+        startJob(key);
       }
 
       function testPrimality() {
