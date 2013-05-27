@@ -4,10 +4,32 @@
     <title>AKS Primality Tester</title>
   </head>
   <body>
+    <input id="n" size="15" pattern="[0-9]*" type="text" value="2685241991" />
+    <input id="testPrimality" type="button" value="Test Primality" />
+
     <pre id="jobs"></pre>
     <input id="refresh" type="button" value="Refresh" />
     <script>
       'use strict';
+
+      function onJobUploaded() {
+        window.setTimeout(updateJobs, 1000);
+      }
+
+      function testPrimality() {
+        var n = document.getElementById('n').value;
+
+        var req = new XMLHttpRequest();
+        req.onload = onJobUploaded;
+        req.open("post", "/uploadJob", true);
+
+        var form = new FormData();
+        form.append("n", n);
+        req.send(form);
+      }
+
+      var testPrimalityButton = document.getElementById('testPrimality');
+      testPrimalityButton.onclick = testPrimality;
 
       function onJobsLoad() {
         var jobsPre = document.getElementById('jobs');
