@@ -13,7 +13,6 @@
       'use strict';
 
       function onJobStarted() {
-        window.setTimeout(updateJobs, 1000);
       }
 
       function startJob(key) {
@@ -62,7 +61,7 @@
       var refreshButton = document.getElementById('refresh');
       refreshButton.onclick = updateJobs;
 
-      updateJobs();
+      window.setInterval(updateJobs, 5000);
     </script>
   </body>
 </html>
