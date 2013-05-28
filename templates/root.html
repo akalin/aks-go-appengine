@@ -48,6 +48,14 @@
       function onJobsLoad() {
         var jobsPre = document.getElementById('jobs');
         var jobs = JSON.parse(this.responseText);
+        if (jobs) {
+          for (var i = 0; i < jobs.length; ++i) {
+            var job = jobs[i];
+            job.NonWitnessCount =
+              job.NonWitnesses ? job.NonWitnesses.length : null;
+            delete job.NonWitnesses
+          }
+        }
         jobsPre.textContent = JSON.stringify(jobs, null, " ");
       }
 
