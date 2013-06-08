@@ -38,7 +38,12 @@ func init() {
 }
 
 func emitError(c appengine.Context, w http.ResponseWriter, error string) {
-	c.Errorf("%s", error)
+	_, file, line, ok := runtime.Caller(1)
+	if !ok {
+		file = "???"
+		line = 0
+	}
+	c.Errorf("%s:%d: %s", file, line, error)
 	http.Error(w, error, http.StatusInternalServerError)
 }
 
