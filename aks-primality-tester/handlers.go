@@ -37,13 +37,17 @@ func init() {
 	http.HandleFunc("/getAKSWitness", getAKSWitnessHandler)
 }
 
-func emitError(c appengine.Context, w http.ResponseWriter, error string) {
+func logError(c appengine.Context, error string) {
 	_, file, line, ok := runtime.Caller(1)
 	if !ok {
 		file = "???"
 		line = 0
 	}
 	c.Errorf("%s:%d: %s", file, line, error)
+}
+
+func emitError(c appengine.Context, w http.ResponseWriter, error string) {
+        logError(c, error);
 	http.Error(w, error, http.StatusInternalServerError)
 }
 
@@ -277,8 +281,8 @@ func processJobHandler(w http.ResponseWriter, r *http.Request) {
 			c, numCPU, "potential-witness-queue",
 			numCPU*secPerPotentialWitness, key.Encode())
 		if err != nil {
-			emitError(c, w, err.Error())
-			return
+			logError(c, err.Error())
+			continue
 		}
 		if len(tasks) == 0 {
 			break
@@ -290,8 +294,8 @@ func processJobHandler(w http.ResponseWriter, r *http.Request) {
 					c, &n, &R, tasks, numCPU, w, logger)
 
 			if err != nil {
-				emitError(c, w, err.Error())
-				return
+				logError(c, err.Error())
+				continue
 			}
 
 			appendToJob := func(c appengine.Context) error {
@@ -302,16 +306,16 @@ func processJobHandler(w http.ResponseWriter, r *http.Request) {
 
 			if err := datastore.RunInTransaction(
 				c, appendToJob, nil); err != nil {
-				emitError(c, w, err.Error())
-				return
+				logError(c, err.Error())
+				continue
 			}
 		}
 
 		err = taskqueue.DeleteMulti(
 			c, tasks, "potential-witness-queue")
 		if err != nil {
-			emitError(c, w, err.Error())
-			return
+			logError(c, err.Error())
+			continue
 		}
 	}
 
