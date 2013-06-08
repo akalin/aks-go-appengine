@@ -1,0 +1,5 @@
+This is an implementation of the AKS primality test (
+http://en.wikipedia.org/wiki/AKS_algorithm ) in Go on AppEngine.
+
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
