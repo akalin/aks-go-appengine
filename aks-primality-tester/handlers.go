@@ -13,13 +13,19 @@ import "net/http"
 import "runtime"
 import "net/url"
 import "os"
+import "time"
+
+type PotentialWitnessInfo struct {
+	PotentialWitness string
+	DurationNs       int64
+}
 
 type Job struct {
 	N            string
 	R            string
 	M            string
-	NonWitnesses []string
-	Witnesses    []string
+	NonWitnesses []PotentialWitnessInfo
+	Witnesses    []PotentialWitnessInfo
 }
 
 func init() {
@@ -159,34 +165,42 @@ func startJobHandler(w http.ResponseWriter, r *http.Request) {
 
 func processPotentialWitnessTask(
 	n *big.Int, r *big.Int, task *taskqueue.Task, maxOutstanding int,
-	w http.ResponseWriter, logger *log.Logger) (string, bool, error) {
-	var potentialWitnessStr string
+	w http.ResponseWriter, logger *log.Logger) (
+	PotentialWitnessInfo, bool, error) {
+	var info PotentialWitnessInfo
 	if err := json.Unmarshal(
-		task.Payload, &potentialWitnessStr); err != nil {
-		return "", false, err
+		task.Payload, &info.PotentialWitness); err != nil {
+		return info, false, err
 	}
 
 	var potentialWitness big.Int
-	potentialWitness.SetString(potentialWitnessStr, 10)
+	potentialWitness.SetString(info.PotentialWitness, 10)
 
 	start := potentialWitness
 	var end big.Int
 	end.Add(&start, big.NewInt(1))
-	a := aks.GetAKSWitness(n, r, &start, &end, maxOutstanding, logger)
 
-	return potentialWitnessStr, a != nil, nil
+	timeStart := time.Now()
+	a := aks.GetAKSWitness(n, r, &start, &end, maxOutstanding, logger)
+	timeEnd := time.Now()
+	info.DurationNs = timeEnd.Sub(timeStart).Nanoseconds()
+
+	return info, a != nil, nil
 }
 
 func processPotentialWitnessTasks(
 	c appengine.Context,
 	n *big.Int, r *big.Int, tasks []*taskqueue.Task, maxOutstanding int,
 	w http.ResponseWriter,
-	logger *log.Logger) ([]string, []string, error) {
+	logger *log.Logger) (
+	[]PotentialWitnessInfo,
+	[]PotentialWitnessInfo,
+	error) {
 
-	var newWitnesses []string
-	var newNonWitnesses []string
+	var newWitnesses []PotentialWitnessInfo
+	var newNonWitnesses []PotentialWitnessInfo
 	for _, task := range tasks {
-		potentialWitness, isWitness, err :=
+		info, isWitness, err :=
 			processPotentialWitnessTask(
 				n, r, task, maxOutstanding, w, logger)
 		if err != nil {
@@ -194,23 +208,24 @@ func processPotentialWitnessTasks(
 		}
 
 		if isWitness {
-			newWitnesses =
-				append(newWitnesses, potentialWitness)
-			c.Infof("%s is an AKS witness for %v",
-				potentialWitness, n)
+			newWitnesses = append(newWitnesses, info)
+			c.Infof("%s is an AKS witness for %v (%v)",
+				info.PotentialWitness, n,
+				time.Duration(info.DurationNs))
 			break
 		} else {
-			newNonWitnesses =
-				append(newNonWitnesses, potentialWitness)
-			c.Infof("%s is not an AKS witness for %v",
-				potentialWitness, n)
+			newNonWitnesses = append(newNonWitnesses, info)
+			c.Infof("%s is not an AKS witness for %v (%v)",
+				info.PotentialWitness, n,
+				time.Duration(info.DurationNs))
 		}
 	}
 	return newWitnesses, newNonWitnesses, nil
 }
 
 func appendResultsToJob(c appengine.Context, key *datastore.Key,
-	newWitnesses []string, newNonWitnesses []string) (Job, error) {
+	newWitnesses []PotentialWitnessInfo,
+	newNonWitnesses []PotentialWitnessInfo) (Job, error) {
 	var job Job
 	if err := datastore.Get(c, key, &job); err != nil {
 		return Job{}, err
