@@ -45,15 +45,99 @@
       var testPrimalityButton = document.getElementById('testPrimality');
       testPrimalityButton.onclick = testPrimality;
 
+      function getSortedDurations(infoList) {
+        if (!infoList || infoList.length == 0) {
+          return [];
+        }
+
+        var durations = infoList.map(function(x) {
+          return x.DurationNs / 1e9;
+        });
+        durations.sort(function(a, b) {
+          if (a < b) {
+            return -1;
+          }
+          if (a > b) {
+            return +1;
+          }
+          return 0;
+        });
+        return durations;
+      }
+
+      function getMeanAndVariance(xs) {
+        var result = {
+          mean: 0,
+          variance: 0
+        };
+
+        if (xs.length == 0) {
+          return result;
+        }
+
+        if (xs.length == 1) {
+          result.mean = xs[0];
+          return result;
+        }
+
+        var n = 0;
+        var mean = 0;
+        var M2 = 0;
+
+        for (var i = 0; i < xs.length; ++i) {
+          ++n;
+          var x = xs[i];
+          var delta = x - mean;
+          mean += delta / n;
+          M2 += delta * (x - mean);
+        }
+
+        result.mean = mean;
+        result.variance = M2 / (n - 1);
+
+        return result;
+      }
+
+      function getPercentile(xs, percentile) {
+        if (xs.length == 0) {
+          return 0.0;
+        }
+
+        var N = xs.length;
+
+        var rank = (percentile / 100) * N + 0.5;
+
+        var k = Math.floor(rank);
+
+        if (k <= 0) {
+          return xs[0];
+        }
+
+        if (k >= (N - 1)) {
+          return xs[N - 1];
+        }
+
+        var vK = xs[k];
+        return vK + (k - rank) * (xs[k + 1] - vK);
+      }
+
       function onJobsLoad() {
         var jobsPre = document.getElementById('jobs');
         var jobs = JSON.parse(this.responseText);
         if (jobs) {
           for (var i = 0; i < jobs.length; ++i) {
             var job = jobs[i];
-            job.NonWitnessCount =
-              job.NonWitnesses ? job.NonWitnesses.length : null;
-            delete job.NonWitnesses
+            var durations = getSortedDurations(job.NonWitnesses);
+            delete job.NonWitnesses;
+            job.NonWitnessCount = durations.length;
+            var result = getMeanAndVariance(durations);
+            job.NonWitnessDurationMeanS = result.mean;
+            job.NonWitnessDurationStdDevS = Math.sqrt(result.variance);
+            job.NonWitnessDurationMinS = getPercentile(durations, 0);
+            job.NonWitnessDurationMedianS = getPercentile(durations, 50);
+            job.NonWitnessDuration90S = getPercentile(durations, 90);
+            job.NonWitnessDuration99S = getPercentile(durations, 99);
+            job.NonWitnessDurationMaxS = getPercentile(durations, 100);
           }
         }
         jobsPre.textContent = JSON.stringify(jobs, null, " ");
